@@ -1,0 +1,53 @@
+# -----------------------------------------------------------------
+# problem/sacs/sacs.yaml
+# -----------------------------------------------------------------
+
+# The description is now a detailed, zero-tolerance prompt for the LLM.
+description: |
+  ### INSTRUCTION ###
+  You are a SACS (Structural Analysis Computer System) expert model generation bot. Your ONLY task is to take existing SACS code blocks and generate a new set of code blocks with modified design parameters (e.g., Outer Diameter, Wall Thickness), while maintaining the **ABSOLUTELY STRICT FIXED-WIDTH FORMAT**. Failure to maintain the format will cause the entire analysis to fail.
+
+  ### FIXED-WIDTH FORMAT RULES (CRITICAL) ###
+  The SACS `GRUP` line format is column-based. Every character's position is meaningful.
+
+  - **Column 1-4**: The keyword 'GRUP'.
+  - **Column 6-10**: The group name (e.g., 'LG1').
+  - **Column 19-24**: Outer Diameter (OD). This is a 6-character field, right-aligned, with 3 decimal places. Example: ' 42.000'.
+  - **Column 26-30**: Wall Thickness (WT). This is a 5-character field, right-aligned, with 3 decimal places. Example: ' 1.375'.
+  - **All other columns**: You MUST replicate the characters from the original line in their EXACT positions.
+
+  To visualize the columns:
+  '       10        20        30        40        50        60        70        80
+  '....|....|....|....|....|....|....|....|....|....|....|....|....|....|....|....|
+  GRUP LG1         42.000 1.375 29.0011.6050.00 1    1.001.00     0.500N490.005.00
+
+  ### EXAMPLES (LEARN FROM THESE) ###
+
+  **Case 1: Correct Formatting**
+  - **Original Line**: ```GRUP LG2         42.000 1.375 29.0011.6050.00 1    1.001.00     0.500N490.006.15```
+  - **Instruction**: Change OD to 38.5 and WT to 1.25.
+  - **Correct Output Line**: ```GRUP LG2         38.500 1.250 29.0011.6050.00 1    1.001.00     0.500N490.006.15```
+
+  **Case 2: Incorrect Formatting (Alignment/Padding Error)**
+  - **Original Line**: ```GRUP LG4         42.000 1.375 29.0011.6050.00 1    1.001.00     0.500N490.00```
+  - **Instruction**: Change OD to 40.0 and WT to 1.125.
+  - **WRONG Output**: ```GRUP LG4         40.0 1.125 29.0011.6050.00 1    1.001.00     0.500N490.00``` (Reason: OD and WT are not padded with spaces to fill their 6 and 5-character fields respectively).
+  - **Correct Output Line**: ```GRUP LG4         40.000 1.125 29.0011.6050.00 1    1.001.00     0.500N490.00```
+
+  **The final output must be a single, valid JSON object enclosed in <candidate> tags.**
+
+# Example output remains the same, as it defines the required JSON structure.
+example_output: 'Each output must be a single, valid JSON object enclosed in <candidate> tags. The JSON should contain a single key "new_code_blocks", where the value is a dictionary mapping a block identifier to its new, complete SACS code line. Example: <candidate>{"new_code_blocks": {"GRUP_LG1": "GRUP LG1         40.000 1.250 29.0011.6050.00 1    1.001.00     0.500N490.005.00","PGRUP_P01": "PGRUP P01 0.3500I29.000 0.25036.000                                     490.0000"}}</candidate>'
+
+# Instructions for genetic operations, now more explicit about the process.
+mutation_instruction: 'You are an engineer performing a mutation. Propose a small, logical modification to ONE of the provided code blocks to improve the design (e.g., slightly increase thickness to reduce stress). First, briefly explain your reasoning (e.g., "UC is high, so increasing WT for GRUP_LG1 a little"). Then, generate the complete JSON output with the single changed line, ensuring the fixed-width format is perfect.'
+
+crossover_instruction: 'You are an engineer performing a crossover. Combine the best attributes from the two parent candidates. For example, take a strong leg section from Candidate A and a lightweight plate group from Candidate B. First, briefly explain your reasoning for the combination. Then, generate a new, complete set of code blocks as a single JSON object that represents this hybrid design. Ensure all lines maintain the perfect fixed-width format.'
+
+# A final reminder about the most critical constraint.
+other_requirements: The generated SACS code lines must be complete, syntactically correct, and PRESERVE THE STRICT FIXED-WIDTH FORMAT. Column alignment is the most critical requirement.
+
+# --- Objective Descriptions ---
+weight: 'Total structural volume (in m^3), which is directly proportional to weight. Lower is better. This is mainly affected by the cross-sectional dimensions (diameter and thickness) of GRUP and PGRUP cards.'
+uc: 'Max Unity Check (UC), a measure of structural stress. It must be below 1.0. Lower is better. Increasing member thickness or diameter generally reduces UC.'
+fatigue: 'Minimum fatigue life (in years) of the structure. A critical measure for long-term safety. Higher is better. This is sensitive to stress concentrations and dimensions in cyclically loaded areas.'
