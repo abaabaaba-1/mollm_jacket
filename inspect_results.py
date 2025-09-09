@@ -16,7 +16,7 @@ if project_root not in sys.path:
 from algorithm.base import Item, HistoryBuffer
 
 # --- 1. 定义你的 .pkl 文件路径 ---
-pkl_file_path = './moo_results/zgca,gemini-2.5-flash-nothinking/mols/weight_uc_fatigue_sacs_block_gen_baseline_GA_42.pkl'
+pkl_file_path = './moo_results/gemini-2.5-flash-nothinking/mols/weight_uc_fatigue_sacs_block_gen_baseline_GA_42.pkl'
 
 print(f"正在加载文件: {pkl_file_path}")
 

@@ -136,6 +136,10 @@ class MOO:
         """
         if mol_buffer is None:
             mol_buffer = self.mol_buffer
+        if not mol_buffer: # Handle empty buffer case
+            print(f"Warning: {buffer_type} buffer is empty. Skipping logging.")
+            return
+            
         auc1 = top_auc(mol_buffer, 1, finish=finish, freq_log=100, max_oracle_calls=self.budget)
         auc10 = top_auc(mol_buffer, 10, finish=finish, freq_log=100, max_oracle_calls=self.budget)
         auc100 = top_auc(mol_buffer, 100, finish=finish, freq_log=100, max_oracle_calls=self.budget)
@@ -144,13 +148,13 @@ class MOO:
         top100_mols = [i[0] for i in top100]
         top10 = top100_mols[:10]
 
-        avg_top10 = np.mean([i.total for i in top10])
-        avg_top100 = np.mean([i.total for i in top100_mols])
+        avg_top10 = np.mean([i.total for i in top10]) if top10 else 0
+        avg_top100 = np.mean([i.total for i in top100_mols]) if top100_mols else 0
 
         ### diversity_top100 = self.reward_system.all_evaluators['diversity']([i.value for i in top100_mols])
         
         ### 
-        if 'l_delta_b' in top10[0].property and 'aspect_ratio' in top10[0].property:
+        if top10 and 'l_delta_b' in top10[0].property and 'aspect_ratio' in top10[0].property:
             all_mols = [item[0] for item in mol_buffer]
             all_mols = [i for i in all_mols if i.constraints['feasibility']<0.01]
             if len(all_mols)>0:
@@ -159,8 +163,8 @@ class MOO:
             else:
                 volume = 0
         else:
-            scores = np.array([i.scores for i in top100_mols])
-            volume = cal_hv(scores) ###
+            scores = np.array([i.scores for i in top100_mols]) if top100_mols else np.array([])
+            volume = cal_hv(scores) if scores.size > 0 else 0
 
         if buffer_type == "default":
             uniqueness = 1 - self.repeat_num / (self.generated_num + 1e-6)
@@ -204,7 +208,7 @@ class MOO:
             'Uniqueness': uniqueness,
             'Validity': validity,
             'Training_step': self.time_step,
-            'avg_top1': top10[0].total,
+            'avg_top1': top10[0].total if top10 else 0,
             'avg_top10': avg_top10,
             'avg_top100': avg_top100,
             'top1_auc': auc1,
@@ -234,47 +238,42 @@ class MOO:
             f'Validity: {validity:.4f} | '
             f'llm_calls: {self.llm_calls} | '
             f'Training step: {self.time_step} | '
-            f'avg_top1: {top10[0].total:.6f} | '
+            f'avg_top1: {top10[0].total if top10 else 0:.6f} | '
             f'avg_top10: {avg_top10:.6f} | '
             f'avg_top100: {avg_top100:.6f} | '
             f'top1_auc: {auc1:.4f} | '
             f'top10_auc: {auc10:.4f} | '
             f'top100_auc: {auc100:.4f} | '
             f'hv: {volume:.4f} | '
-            f'unique top 100:{len(np.unique([i.value for i in top100_mols]))} | '
+            f'unique top 100:{len(np.unique([i.value for i in top100_mols])) if top100_mols else 0} | '
             f'input_tokens: {self.llm.input_tokens} | '
             f'output_tokens: {self.llm.output_tokens} | '
             f'running_time: {(time.time()-self.start_time)/3600:.3f} h'
             ###f'div: {diversity_top100:.4f}'
             )
 
-
     def update_experience(self):
         prompt,best_moles_prompt,bad_moles_prompt = self.prompt_generator.make_experience_prompt(self.mol_buffer)
         response = self.llm.chat(prompt)
         
-        #self.prompt_generator.experience = (f"I already have some experience, take advantage of them :{response}"
-        #                                    )
         self.prompt_generator.pure_experience = response
         self.prompt_generator.experience = (f"I already have some experience: <experience> {response} </experience>" 
                                             f"You can take advantage of these experience and try to propose better molecules according to the objectives.\n")
-        #self.prompt_generator.experience = (f"I already have some experience and some good and bad moleculles, the experience is: <experience> {response}" 
-        #                                    f"good example molecules are: {best_moles_prompt},\n"
-        #                                    f"and bad example molecules that you need to avoid molecules like them: {bad_moles_prompt}. </experience>\n"
-        #                                    f"You can take advantage of them and try to propose better molecules according to the objectives.\n"
-        #                                    )
         
         self.history_experience.append(self.prompt_generator.experience) 
         print('length exp:',len(self.prompt_generator.experience))
-
     
     def run(self):
         store_path = os.path.join(self.save_dir,'mols','_'.join(self.property_list) + '_' + self.config.get('save_suffix') + f'_{self.seed}' +'.pkl')
         if not os.path.exists(os.path.dirname(store_path)):
             os.makedirs(os.path.dirname(store_path), exist_ok=True)
             
+        # START: MODIFIED PAUSE/RESUME SECTION
+        # Define the path for the signal file used for graceful shutdown.
+        stop_signal_file = os.path.join(self.save_dir, 'STOP_RUN')
+        # END: MODIFIED PAUSE/RESUME SECTION
+            
         ''' initialize genetic gfn model'''
-        
         if self.use_au:
             from genetic_gfn.multi_objective.genetic_gfn.run import Genetic_GFN_Optimizer
             from genetic_gfn.multi_objective.run import prepare_optimization_inputs
@@ -293,19 +292,32 @@ class MOO:
             module = importlib.import_module(module_path)
             _get = getattr(module, "get_database")
             database = _get(self.config,n_sample=200)
+
+        # START: MODIFIED PAUSE/RESUME SECTION
         if self.config.get('resume'):
+            print("Attempting to resume from checkpoint...")
             population,init_pops = self.load_ckpt(store_path)
+            # Adjust start time to reflect total running time
+            if self.results_dict['results']:
+                 last_run_time = self.results_dict['results'][-1].get('running_time[s]', 0)
+                 self.start_time = time.time() - last_run_time
         else:
+            if os.path.exists(stop_signal_file):
+                print(f"Warning: Found old stop signal file '{stop_signal_file}'. Removing it for a new run.")
+                os.remove(stop_signal_file)
             population = self.generate_initial_population(n=self.pop_size)
-            if population[0].total is None:
+            if population and population[0].total is None:
                 population = self.evaluate(population) # including removing invalid and repeated candidates
             self.log_results()
             init_pops = copy.deepcopy(population)
+        # END: MODIFIED PAUSE/RESUME SECTION
+
         self.prompt_generator = self.prompt_module(self.config)
         
-        self.num_gen = 0
+        self.num_gen = len(self.results_dict['results'])
         
         while True:
+            print(f"\n--- Starting Generation {self.num_gen + 1} ---")
             if self.config.get('inject_per_generation'):
                 print('inject!')
                 population.extend(random.sample(database,self.config.get('inject_per_generation')))
@@ -315,13 +327,10 @@ class MOO:
             self.log_results()
             if self.config.get('model.experience_prob')>0 and len(self.mol_buffer)>100:
                 self.update_experience()
-            if len(self.mol_buffer) >= self.budget or self.early_stopping:
-                self.log_results(finish=True)
-                if self.use_au:
-                    self.log_results(self.main_mol_buffer,buffer_type="main", finish=True)
-                    self.log_results(self.au_mol_buffer,buffer_type="au", finish=True)
-                break
-            self.num_gen+=1
+
+            # START: MODIFIED PAUSE/RESUME SECTION
+            # 1. Save checkpoint AT EVERY GENERATION
+            print(f"Generation {self.num_gen + 1} complete. Saving checkpoint...")
             data = {
                 'history':self.history,
                 'init_pops':init_pops,
@@ -333,34 +342,32 @@ class MOO:
             }
             with open(store_path, 'wb') as f:
                 pickle.dump(data, f)
-            if self.num_gen%10==0:
-                print(f"Data saved to {store_path}")
+            print(f"Checkpoint saved to {store_path}")
+
+            # 2. Check for normal stop conditions
+            if len(self.mol_buffer) >= self.budget or self.early_stopping:
+                print("Budget reached or early stopping triggered. Finishing run.")
+                self.log_results(finish=True)
+                if self.use_au:
+                    self.log_results(self.main_mol_buffer,buffer_type="main", finish=True)
+                    self.log_results(self.au_mol_buffer,buffer_type="au", finish=True)
+                break
+            
+            # 3. Check for graceful shutdown signal
+            if os.path.exists(stop_signal_file):
+                print(f"\nStop signal file '{stop_signal_file}' detected.")
+                print("Gracefully shutting down. The run can be resumed later.")
+                os.remove(stop_signal_file) # Remove signal file to avoid immediate stop on next run
+                break # Exit the loop cleanly
+
+            self.num_gen += 1
+            # END: MODIFIED PAUSE/RESUME SECTION
+
         print(f'=======> total running time { (time.time()-start_time)/3600 :.2f} hours <=======')
         
-        return init_pops,population  # 计算效率
-    '''
-    def sanitize(self,tmp_offspring,record=True):
-        return tmp_offspring ###
-        offspring = []
-        smiles_this_gen = []
-        for child in tmp_offspring:
-            mol = Chem.MolFromSmiles(child.value) 
-            if mol is None: # check if valid
-                if record:
-                    self.failed_num += 1
-            else:
-                child.value = Chem.MolToSmiles(mol,canonical=True)
-                # check if repeated
-                if child.value in self.history_moles or child.value in smiles_this_gen:
-                    if record:
-                        self.repeat_num +=1
-                    else:
-                        offspring.append(child)
-                else:
-                    smiles_this_gen.append(child.value)
-                    offspring.append(child)
-        return offspring
-    '''
+        return init_pops,population
+
+    # The rest of the methods remain unchanged...
 
     def record(self, tmp_offspring: list, buffer_type: str) -> list:
         """
@@ -378,18 +385,21 @@ class MOO:
         self.record_dict[buffer_type + '_all_num'] += len(tmp_offspring)
 
         for child in tmp_offspring:
-            mol = Chem.MolFromSmiles(child.value)
-            if mol is None:
-                self.record_dict[buffer_type + '_failed_num'] += 1
+            # Assuming SACS code, not SMILES. Bypassing Chem check.
+            # mol = Chem.MolFromSmiles(child.value)
+            # if mol is None: 
+            #    self.record_dict[buffer_type + '_failed_num'] += 1
+            # else:
+            #    child.value = Chem.MolToSmiles(mol)
+            history_list = self.record_dict.get(buffer_type + '_history_smiles', [])
+            if child.value in history_list or child.value in smiles_this_gen:
+                self.record_dict[buffer_type + '_repeat_num'] += 1
             else:
-                child.value = Chem.MolToSmiles(mol)
-                if (child.value in self.record_dict[buffer_type + '_history_smiles'] or
-                    child.value in smiles_this_gen):
-                    self.record_dict[buffer_type + '_repeat_num'] += 1
-                else:
-                    self.record_dict[buffer_type + '_history_smiles'].append(child.value)
-                    smiles_this_gen.append(child.value)
-                    offspring.append(child)
+                if buffer_type + '_history_smiles' not in self.record_dict:
+                    self.record_dict[buffer_type + '_history_smiles'] = []
+                self.record_dict[buffer_type + '_history_smiles'].append(child.value)
+                smiles_this_gen.append(child.value)
+                offspring.append(child)
         return offspring
 
     def mating(self, parent_list: list, au: bool = False) -> tuple:
@@ -405,53 +415,50 @@ class MOO:
         """
         crossover_prob = self.config.get('model.crossover_prob')
         mutation_prob = self.config.get('model.mutation_prob')
-        explore_prob = self.config.get('model.explore_prob')
-        function = np.random.choice([self.crossover,self.mutation,self.explore],p=[crossover_prob,
-                                                                                   mutation_prob,
-                                                                                   explore_prob])
+        explore_prob = self.config.get('model.explore_prob', 0.0) # Add default value for explore_prob
+        
+        # Ensure probabilities sum to 1
+        total_prob = crossover_prob + mutation_prob + explore_prob
+        if not np.isclose(total_prob, 1.0):
+            # Normalize probabilities if they don't sum to 1
+            crossover_prob /= total_prob
+            mutation_prob /= total_prob
+            explore_prob /= total_prob
+
+        function = np.random.choice([self.crossover,self.mutation,self.explore], p=[crossover_prob, mutation_prob, explore_prob])
         items,prompt,response = function(parent_list)
         return items,prompt,response
     
     def generate_offspring(self, population: list, offspring_times: int) -> list:
         """
         Generates new offspring from the population using LLM-driven operations, and evaluates them.
-
-        Parameters:
-        - population (list): List of Item objects representing the current population.
-        - offspring_times (int): Number of offspring pairs to generate.
-
-        Returns:
-        - list: Evaluated and recorded offspring.
         """
+        if not population:
+            print("Warning: Population is empty. Cannot generate offspring.")
+            return []
+        
         parents = [random.sample(population, 2) for i in range(offspring_times)]
-        parallel = True
-        if parallel:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(self.mating, parent_list=parent_list) for parent_list in parents]
-                #results = [future.result() for future in futures]
-                #children, prompts, responses = zip(*results) #[[item,item],[item,item]] # ['who are you value 1', 'who are you value 2'] # ['yes, 'no']
-                #self.llm_calls += len(results)     
-                results = []
-                for future in futures:
-                    try:
-                        result = future.result(timeout=120)  # 最多等待 120 秒
-                        results.append(result)
-                    except concurrent.futures.TimeoutError:
-                        print("Warning: A task timed out after 180 seconds.")
-                        continue  # 或者 results.append(default_value)
-                if results:
-                    children, prompts, responses = zip(*results)
-                    self.llm_calls += len(results)
-                else:
-                    print("No results collected due to timeouts.")
-        else:
-            children,prompts,responses = [],[],[]
-            for parent_list in tqdm(parents):
-                child,prompt,response = self.mating(parent_list)
-                children.append(child)
-                prompts.append(prompt)
-                responses.append(response)
-                self.llm_calls += 1
+        
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(self.mating, parent_list=parent_list) for parent_list in parents]
+            results = []
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result(timeout=180)  # Increased timeout
+                    results.append(result)
+                except concurrent.futures.TimeoutError:
+                    print("Warning: A task timed out after 180 seconds.")
+                    continue
+                except Exception as e:
+                    print(f"An error occurred in a thread: {e}")
+                    continue
+        
+        if not results:
+            print("No new offspring were generated in this round.")
+            return []
+
+        children, prompts, responses = zip(*results)
+        self.llm_calls += len(results)
         
         tmp_offspring = []
         for child_pair in children:
@@ -462,18 +469,16 @@ class MOO:
             self.record(tmp_offspring,'main')
             self.save_log_mols(tmp_offspring,buffer_type='main')
             
-            au_smiles = self.au_model.sample_n_smiles(32,self.mol_buffer)
-            ### au_smiles = self.generate_offspring_au(population,offspring_times=20)
-            au_smiles = [self.item_factory.create(smiles) for smiles in au_smiles]
-            self.generated_num += len(au_smiles)
-            self.record(au_smiles,'au')
-            self.save_log_mols(au_smiles,buffer_type='au')
-            tmp_offspring.extend(au_smiles)
+            au_items = self.au_model.sample_n_smiles(32,self.mol_buffer)
+            au_items = [self.item_factory.create(item_str) for item_str in au_items]
+            self.generated_num += len(au_items)
+            self.record(au_items,'au')
+            self.save_log_mols(au_items,buffer_type='au')
+            tmp_offspring.extend(au_items)
             
-        #offspring = self.sanitize(tmp_offspring,record=True)
         offspring = tmp_offspring
         
-        if len(offspring) == 0:
+        if not offspring:
             return []
 
         offspring = self.evaluate(offspring)
@@ -483,10 +488,6 @@ class MOO:
     def save_log_mols(self, mols: list, buffer_type: str) -> None:
         """
         Evaluates molecules, trains AU model if applicable, stores in buffer, and logs metrics.
-
-        Parameters:
-        - mols (list): List of Item objects to save and evaluate.
-        - buffer_type (str): Indicates which buffer ('main' or 'au') to update.
         """
         self.time_step += 1
         mols,_ = self.reward_system.evaluate(mols)
@@ -496,42 +497,29 @@ class MOO:
         elif buffer_type=='au':
             mol_buffer = self.au_mol_buffer
             self.au_model.train_on_smiles([i.value for i in mols],[i.total for i in mols],loop=4,time_step=self.time_step,mol_buffer=mol_buffer)
-        # print('oracle length: ',len(self.mol_buffer))
-
+        
         self.mol_buffer_store(mol_buffer,mols)
-        # 这里加了重复的 
         self.log_results(mol_buffer,buffer_type, finish=False)
 
     def mol_buffer_store(self, mol_buffer: list, mols: list) -> list:
         """
         Stores non-duplicate molecules into a specified buffer.
-
-        Parameters:
-        - mol_buffer (list): List buffer to store Item objects.
-        - mols (list): List of Item objects to attempt storing.
-
-        Returns:
-        - list: Updated mol_buffer with new unique molecules.
         """
-        all_smiles = [i[0].value for i in mol_buffer]
+        all_values = [i[0].value for i in mol_buffer]
         for child in mols:
-            mol = Chem.MolFromSmiles(child.value) 
-            if mol is None: # check if valid
-                pass
-            else:
-                child.value = Chem.MolToSmiles(mol,canonical=True)
+            if child.is_valid:
                 # check if repeated
-                if child.value in all_smiles:
+                if child.value in all_values:
                     pass
                 else:
-                    all_smiles.append(child.value)
+                    all_values.append(child.value)
                     mol_buffer.append([child,len(mol_buffer)+1])
         return mol_buffer
 
-
     def select_next_population(self, pop_size):
-        #combined_population = offspring + population 
         whole_population = [i[0] for i in self.mol_buffer]
+        if not whole_population:
+            return []
         if len(self.property_list)>1:
             return nsga2_so_selection(whole_population, pop_size)
         else:
@@ -542,7 +530,7 @@ class MOO:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = [executor.submit(self.mating, parent_list=parent_list,au=True) for parent_list in parents]
             results = [future.result() for future in futures]
-            children, prompts, responses = zip(*results) #[[item,item],[item,item]] # ['who are you value 1', 'who are you value 2'] # ['yes, 'no']
+            children, prompts, responses = zip(*results)
             self.llm_calls += len(results)
         tmp_offspring = []
         for child_pair in children:
@@ -551,7 +539,11 @@ class MOO:
         return tmp_offspring
     
     def load_ckpt(self,store_path):
-        print('resume training')
+        if not os.path.exists(store_path):
+            print(f"Error: Checkpoint file not found at {store_path}. Cannot resume.")
+            return None, None
+            
+        print(f'Data found, loading from {store_path}')
         save_dir = os.path.join(self.save_dir, "results")
         json_path = os.path.join(save_dir, '_'.join(self.property_list) + '_' +
                             self.config.get('save_suffix') + f'_{self.seed}.json')
@@ -559,19 +551,22 @@ class MOO:
             ckpt = pickle.load(f)
         with open(json_path,'rb') as f:
             result_ckpt = json.load(f)
-        self.mol_buffer = ckpt['all_mols']
+        self.mol_buffer = ckpt.get('all_mols', [])
         population = self.select_next_population(self.pop_size) 
-        init_pops = ckpt['init_pops']
-        self.history = ckpt['history']
+        init_pops = ckpt.get('init_pops', [])
+        self.history = ckpt.get('history', HistoryBuffer())
         
         self.history_moles = [i[0].value for i in self.mol_buffer]
-        self.results_dict['results'] = ckpt['evaluation']
-        self.generated_num = result_ckpt['results'][-1]['generated_num']
-        self.llm_calls = result_ckpt['results'][-1]['llm_calls']
-        self.repeat_num = int((1-result_ckpt['results'][-1]['Uniqueness']) * self.generated_num)
-        self.failed_num = int((1-result_ckpt['results'][-1]['Validity']) * self.generated_num)
+        self.results_dict['results'] = ckpt.get('evaluation', [])
+        
+        if result_ckpt['results']:
+            last_result = result_ckpt['results'][-1]
+            self.generated_num = last_result.get('generated_num', 0)
+            self.llm_calls = last_result.get('llm_calls', 0)
+            uniqueness = last_result.get('Uniqueness', 1.0)
+            validity = last_result.get('Validity', 1.0)
+            self.repeat_num = int((1 - uniqueness) * self.generated_num)
+            self.failed_num = int((1 - validity) * self.generated_num)
+        
+        print(f"Resuming from {len(self.mol_buffer)} evaluated candidates.")
         return population, init_pops
-
-    
-    
- 

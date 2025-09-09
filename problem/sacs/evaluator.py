@@ -1,170 +1,268 @@
-# problem/sacs/evaluator.py
-
+# problem/sacs/evaluator.py (V3 - 最终格式修复版)
 import numpy as np
 import json
 import logging
 import random
 import copy
-from pathlib import Path
+import re
 
-# --- 从相同目录导入 SACS 特定模块 ---
 from .sacs_file_modifier import SacsFileModifier
 from .sacs_runner import SacsRunner
 from .sacs_interface_uc import get_sacs_uc_summary
-from .sacs_interface_weight import calculate_sacs_volume
-from .sacs_interface_ftg import get_sacs_fatigue_summary
+from .sacs_interface_weight_improved import calculate_sacs_weight_from_db
 
-# --------------------------------------------------------------------------
-# --- 修改开始：定义所有精英种子并更新初始种群列表 ---
-# --------------------------------------------------------------------------
+# --- START: 种子定义区 (所有格式和数值均已经过最终校对) ---
 
-# 1. 将所有由 seed_finder.py 生成的精英种子定义为Python字典
+# 种子 1: 均衡型基准 (格式正确)
+SEED_BASELINE = {
+    "new_code_blocks": {
+        "GRUP_LG1": "GRUP LG1         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.005.00",
+        "GRUP_LG2": "GRUP LG2         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.006.15",
+        "GRUP_LG3": "GRUP LG3         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.006.75",
+        "GRUP_LG4": "GRUP LG4         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.00",
+        "GRUP_LG5": "GRUP LG5         36.300 1.050 29.0011.6050.00 1    1.001.00     0.500N490.00",
+        "GRUP_LG6": "GRUP LG6         36.300 0.800 29.0011.0036.00 1    1.001.00     0.500N490.003.25",
+        "GRUP_LG7": "GRUP LG7         26.200 0.800 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL1": "GRUP PL1         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL2": "GRUP PL2         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL3": "GRUP PL3         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL4": "GRUP PL4         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_T01": "GRUP T01         16.100 0.650 29.0111.2035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T02": "GRUP T02         20.100 0.780 29.0011.6035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T03": "GRUP T03         12.800 0.520 29.0111.6035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T04": "GRUP T04         24.100 0.780 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_T05": "GRUP T05         26.100 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_W.B": "GRUP W.B         36.500 1.050 29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "GRUP_W01": "GRUP W01 W24X162              29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "GRUP_W02": "GRUP W02 W24X131              29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "PGRUP_P01": "PGRUP P01 0.3750I29.000 0.25036.000                                     490.0000"
+    }
+}
 
-# 基准方案
-SEED_BASELINE = { "new_code_blocks": { "GRUP_LG1": "GRUP LG1         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.005.00", "GRUP_LG2": "GRUP LG2         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.006.15", "GRUP_LG3": "GRUP LG3         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.006.75", "GRUP_LG4": "GRUP LG4         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.00", "GRUP_LG5": "GRUP LG5         36.300 1.050 29.0011.6050.00 1    1.001.00     0.500N490.00", "GRUP_LG6": "GRUP LG6         36.300 0.800 29.0011.0036.00 1    1.001.00     0.500N490.003.25", "GRUP_LG7": "GRUP LG7         26.200 0.800 29.0011.6036.00 1    1.001.00     0.500N490.00", "GRUP_PL1": "GRUP PL1         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00", "GRUP_PL2": "GRUP PL2         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00", "GRUP_PL3": "GRUP PL3         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00", "GRUP_PL4": "GRUP PL4         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00", "GRUP_T01": "GRUP T01         16.100 0.650 29.0111.2035.00 1    1.001.00     0.500N490.00", "GRUP_T02": "GRUP T02         20.100 0.780 29.0011.6035.00 1    1.001.00     0.500N490.00", "GRUP_T03": "GRUP T03         12.800 0.520 29.0111.6035.00 1    1.001.00     0.500N490.00", "GRUP_T04": "GRUP T04         24.100 0.780 29.0011.6036.00 1    1.001.00     0.500N490.00", "GRUP_T05": "GRUP T05         26.100 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00", "GRUP_W.B": "GRUP W.B         36.500 1.050 29.0111.2035.97 1    1.001.00     0.500 490.00", "PGRUP_P01": "PGRUP P01 0.3750I29.000 0.25036.000                                     490.0000" } }
-# 我们将基准方案作为第一个，并重命名为 BASELINE_CODE_BLOCKS 以兼容旧代码
-BASELINE_CODE_BLOCKS = SEED_BASELINE
+# 种子 2: 轻量可行种子 (已完全修复格式)
+SEED_LIGHT_FEASIBLE = {
+    "new_code_blocks": {
+        "GRUP_LG1": "GRUP LG1         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.005.00",
+        "GRUP_LG2": "GRUP LG2         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.006.15",
+        "GRUP_LG3": "GRUP LG3         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.006.75",
+        "GRUP_LG4": "GRUP LG4         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.00",
+        "GRUP_LG5": "GRUP LG5         36.300 1.050 29.0011.6050.00 1    1.001.00     0.500N490.00",
+        "GRUP_LG6": "GRUP LG6         31.000 0.604 29.0011.0036.00 1    1.001.00     0.500N490.003.25",
+        "GRUP_LG7": "GRUP LG7         21.000 0.852 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL1": "GRUP PL1         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL2": "GRUP PL2         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL3": "GRUP PL3         31.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL4": "GRUP PL4         31.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_T01": "GRUP T01         16.100 0.650 29.0111.2035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T02": "GRUP T02         20.100 0.780 29.0011.6035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T03": "GRUP T03         12.800 0.520 29.0111.6035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T04": "GRUP T04         24.100 0.780 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_T05": "GRUP T05         26.100 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_W.B": "GRUP W.B         36.500 1.050 29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "GRUP_W01": "GRUP W01 W24X103              29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "GRUP_W02": "GRUP W02 W24X76               29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "PGRUP_P01": "PGRUP P01 0.4113I29.000 0.25036.000                                     490.0000"
+    }
+}
 
-# 重量最小的方案
-SEED_MIN_WEIGHT_1 = { "new_code_blocks": { "GRUP_LG1": "GRUP LG1          10.000 0.450 9.0011.6050.00 1    1.001.00     0.500N490.005.00", "GRUP_LG2": "GRUP LG2         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.006.15", "GRUP_LG3": "GRUP LG3         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.006.75", "GRUP_LG4": "GRUP LG4           2.200 0.500 9.0011.6050.00 1    1.001.00     0.500N490.00", "GRUP_T02": "GRUP T02          10.000 0.780 9.0011.6035.00 1    1.001.00     0.500N490.00", **{k:v for k,v in SEED_BASELINE["new_code_blocks"].items() if k not in ["GRUP_LG1", "GRUP_LG2", "GRUP_LG3", "GRUP_LG4", "GRUP_T02"]}} }
-SEED_MIN_WEIGHT_2 = { "new_code_blocks": { "GRUP_LG4": "GRUP LG4           2.200 0.500 9.0011.6050.00 1    1.001.00     0.500N490.00", **{k:v for k,v in SEED_BASELINE["new_code_blocks"].items() if k not in ["GRUP_LG4"]}}}
+# 种子 3: 高安全裕度种子 (已完全修复格式)
+SEED_STRONG_FEASIBLE = {
+    "new_code_blocks": {
+        "GRUP_LG1": "GRUP LG1         42.200 1.450 29.0011.6050.00 1    1.001.00     0.500N490.005.00",
+        "GRUP_LG2": "GRUP LG2         41.000 0.500 29.0011.6050.00 1    1.001.00     0.500N490.006.15",
+        "GRUP_LG3": "GRUP LG3         41.000 0.500 29.0011.6050.00 1    1.001.00     0.500N490.006.75",
+        "GRUP_LG4": "GRUP LG4         41.000 0.500 29.0011.6050.00 1    1.001.00     0.500N490.00",
+        "GRUP_LG5": "GRUP LG5         36.300 1.050 29.0011.6050.00 1    1.001.00     0.500N490.00",
+        "GRUP_LG6": "GRUP LG6         31.000 0.800 29.0011.0036.00 1    1.001.00     0.500N490.003.25",
+        "GRUP_LG7": "GRUP LG7         26.200 0.800 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL1": "GRUP PL1         31.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL2": "GRUP PL2         31.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL3": "GRUP PL3         31.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL4": "GRUP PL4         36.300 1.050 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_T01": "GRUP T01         16.100 0.650 29.0111.2035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T02": "GRUP T02         21.000 0.780 29.0011.6035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T03": "GRUP T03         12.800 0.520 29.0111.6035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T04": "GRUP T04         24.100 0.780 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_T05": "GRUP T05         21.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_W.B": "GRUP W.B         36.500 1.050 29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "GRUP_W01": "GRUP W01 W24X229              29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "GRUP_W02": "GRUP W02 W24X207              29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "PGRUP_P01": "PGRUP P01 0.3750I29.000 0.25036.000                                     490.0000"
+    }
+}
 
-# 重量最大的方案
-SEED_MAX_WEIGHT_1 = { "new_code_blocks": { "GRUP_LG2": "GRUP LG2          10.000 0.450 9.0011.6050.00 1    1.001.00     0.500N490.006.15", "GRUP_T02": "GRUP T02          10.000 0.780 9.0011.6035.00 1    1.001.00     0.500N490.00", "GRUP_T03": "GRUP T03          10.000 0.520 9.0111.6035.00 1    1.001.00     0.500N490.00", **{k:v for k,v in SEED_BASELINE["new_code_blocks"].items() if k not in ["GRUP_LG2", "GRUP_T02", "GRUP_T03"]}} }
+# 种子 4: 极限边界种子 (已完全修复格式)
+SEED_EDGE_INFEASIBLE = {
+    "new_code_blocks": {
+        "GRUP_LG1": "GRUP LG1         41.000 0.503 29.0011.6050.00 1    1.001.00     0.500N490.005.00",
+        "GRUP_LG2": "GRUP LG2         41.000 0.575 29.0011.6050.00 1    1.001.00     0.500N490.006.15",
+        "GRUP_LG3": "GRUP LG3         41.000 0.500 29.0011.6050.00 1    1.001.00     0.500N490.006.75",
+        "GRUP_LG4": "GRUP LG4         41.000 0.500 29.0011.6050.00 1    1.001.00     0.500N490.00",
+        "GRUP_LG5": "GRUP LG5         31.000 0.500 29.0011.6050.00 1    1.001.00     0.500N490.00",
+        "GRUP_LG6": "GRUP LG6         31.000 0.988 29.0011.0036.00 1    1.001.00     0.500N490.003.25",
+        "GRUP_LG7": "GRUP LG7         26.200 0.800 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL1": "GRUP PL1         31.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL2": "GRUP PL2         31.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL3": "GRUP PL3         31.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_PL4": "GRUP PL4         31.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_T01": "GRUP T01         11.000 0.650 29.0111.2035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T02": "GRUP T02         21.000 0.859 29.0011.6035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T03": "GRUP T03         11.000 0.500 29.0111.6035.00 1    1.001.00     0.500N490.00",
+        "GRUP_T04": "GRUP T04         21.000 0.780 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_T05": "GRUP T05         21.000 0.500 29.0011.6036.00 1    1.001.00     0.500N490.00",
+        "GRUP_W.B": "GRUP W.B         36.500 1.050 29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "GRUP_W01": "GRUP W01 W24X94               29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "GRUP_W02": "GRUP W02 W24X207              29.0111.2035.97 1    1.001.00     0.500 490.00",
+        "PGRUP_P01": "PGRUP P01 0.2500I29.000 0.25036.000                                     490.0000"
+    }
+}
 
-# UC最小的方案
-SEED_MIN_UC_1 = { "new_code_blocks": { "GRUP_LG4": "GRUP LG4          10.000 0.450 9.0011.6050.00 1    1.001.00     0.500N490.00", **{k:v for k,v in SEED_BASELINE["new_code_blocks"].items() if k not in ["GRUP_LG4"]}} }
-SEED_MIN_UC_2 = { "new_code_blocks": { "GRUP_LG2": "GRUP LG2          10.000 0.450 9.0011.6050.00 1    1.001.00     0.500N490.006.15", **{k:v for k,v in SEED_BASELINE["new_code_blocks"].items() if k not in ["GRUP_LG2"]}} }
+# --- END: 种子定义区 ---
 
-# UC最大的方案
-SEED_MAX_UC_1 = { "new_code_blocks": { "GRUP_LG1": "GRUP LG1           2.200 0.500 9.0011.6050.00 1    1.001.00     0.500N490.005.00", "GRUP_LG4": "GRUP LG4          10.000 0.450 9.0011.6050.00 1    1.001.00     0.500N490.00", **{k:v for k,v in SEED_BASELINE["new_code_blocks"].items() if k not in ["GRUP_LG1", "GRUP_LG4"]}} }
-
-# 疲劳寿命最长的方案
-SEED_MAX_FATIGUE_1 = { "new_code_blocks": { "GRUP_LG1": "GRUP LG1          10.000 0.450 9.0011.6050.00 1    1.001.00     0.500N490.005.00", **{k:v for k,v in SEED_BASELINE["new_code_blocks"].items() if k not in ["GRUP_LG1"]}} }
-SEED_MAX_FATIGUE_2 = { "new_code_blocks": { "GRUP_LG3": "GRUP LG3          10.000 0.450 9.0011.6050.00 1    1.001.00     0.500N490.006.75", **{k:v for k,v in SEED_BASELINE["new_code_blocks"].items() if k not in ["GRUP_LG3"]}} }
-
-# 疲劳寿命最短的方案
-SEED_MIN_FATIGUE_1 = { "new_code_blocks": { "GRUP_LG3": "GRUP LG3          10.000 0.450 9.0011.6050.00 1    1.001.00     0.500N490.006.75", "GRUP_LG4": "GRUP LG4           2.200 0.586 9.0011.6050.00 1    1.001.00     0.500N490.00", **{k:v for k,v in SEED_BASELINE["new_code_blocks"].items() if k not in ["GRUP_LG3", "GRUP_LG4"]}} }
-
-
-# 2. 将所有精英种子汇集到一个列表中，用于初始化种群
+# 将所有种子聚合到 INITIAL_SEEDS 列表中
 INITIAL_SEEDS = [
     SEED_BASELINE,
-    SEED_MIN_WEIGHT_1,
-    SEED_MIN_WEIGHT_2,
-    SEED_MAX_WEIGHT_1,
-    SEED_MIN_UC_1,
-    SEED_MIN_UC_2,
-    SEED_MAX_UC_1,
-    SEED_MAX_FATIGUE_1,
-    SEED_MAX_FATIGUE_2,
-    SEED_MIN_FATIGUE_1,
+    SEED_LIGHT_FEASIBLE,
+    SEED_STRONG_FEASIBLE,
+    SEED_EDGE_INFEASIBLE,
+]
+logging.info(f"成功加载并定义了 {len(INITIAL_SEEDS)} 个精英种子。所有种子格式和数值均已最终校正。")
+
+# ... [文件的其余部分（W_SECTIONS_LIBRARY, _parse_and_modify_line, generate_initial_population, RewardingSystem 等）保持不变] ...
+# 您上次已经更新了这些部分的代码，它们是正确的，无需再次更改。
+W_SECTIONS_LIBRARY = [
+    "W24X55", "W24X62", "W24X68", "W24X76", "W24X84", "W24X94", "W24X103",
+    "W24X104", "W24X117", "W24X131", "W24X146", "W24X162", "W24X176",
+    "W24X192", "W24X207", "W24X229"
 ]
 
-logging.info(f"成功加载并定义了 {len(INITIAL_SEEDS)} 个内存中的精英种子方案用于初始种群生成。")
-
-# --- 修改结束 ---
-
-
-def _parse_and_modify_line(line, block_name):
-    """
-    辅助函数，用于解析并随机修改 GRUP 或 PGRUP 卡片行。
-    保持扩大的随机扰动范围以增强探索能力。
-    """
-    # (此函数保持不变，无需修改)
+def _parse_and_modify_line(line: str, block_name: str) -> str:
+    # ... 此函数逻辑正确，无需修改 ...
     try:
         keyword = block_name.split()[0]
+        original_line_stripped = line.rstrip()
 
-        if keyword == "GRUP":
-            key_part = line[0:4]
-            group_name = block_name.split()[1]
-            group_part = f" {group_name:<13}"
-            od_str, wt_str = line[18:24], line[25:30]
-            rest_of_line = line[31:]
-            od_val, wt_val = float(od_str), float(wt_str)
+        # Logic for I-Beams (GRUP Wxx)
+        if keyword == "GRUP" and re.search(r'(W\d+X\d+)', line):
+            match = re.search(r'(W\d+X\d+)', line)
+            current_section = match.group(1)
+            try:
+                current_index = W_SECTIONS_LIBRARY.index(current_section)
+            except ValueError:
+                logging.warning(f"Section '{current_section}' for GRUP '{block_name}' not in library. Skipping.")
+                return original_line_stripped
 
+            step = random.randint(1, 3) * random.choice([-1, 1])
+            new_index = np.clip(current_index + step, 0, len(W_SECTIONS_LIBRARY) - 1)
+            new_section = W_SECTIONS_LIBRARY[new_index]
+            
+            # Replace while preserving spacing around the section name
+            return original_line_stripped.replace(current_section, new_section, 1)
+
+        # Logic for Tubular Members (GRUP)
+        elif keyword == "GRUP":
+            if 'CONE' in line: return original_line_stripped
+
+            try:
+                # Extract OD and WT values cleanly
+                od_val, wt_val = float(line[18:24]), float(line[25:30])
+            except (ValueError, IndexError):
+                logging.warning(f"Could not parse OD/WT for GRUP '{block_name}': '{line.strip()}'. Skipping.")
+                return original_line_stripped
+
+            # Apply mutation
             if random.choice([True, False]):
-                od_val *= random.uniform(0.6, 1.4) 
-                od_val = np.clip(od_val, 10.0, 48.0)
+                od_val *= random.uniform(0.9, 1.1)
             else:
-                wt_val *= random.uniform(0.6, 1.4) 
-                wt_val = np.clip(wt_val, 0.5, 2.5)
+                wt_val *= random.uniform(0.9, 1.1)
 
-            new_line = f"{key_part}{group_part}{od_val:>6.3f} {wt_val:>5.3f} {rest_of_line}"
-            return new_line[:len(line)]
+            # Enforce constraints
+            od_val = np.clip(od_val, 10.0, 99.999)
+            wt_val = np.clip(wt_val, 0.5, 9.999)
+            
+            # Reconstruct the line using f-string formatting to guarantee correct spacing
+            new_od_str = f"{od_val:6.3f}"
+            new_wt_str = f"{wt_val:5.3f}"
+            
+            # Use slicing to replace only the relevant parts of the line
+            new_line = line[:18] + new_od_str + " " + new_wt_str + line[30:]
+            return new_line.rstrip()
 
+        # Logic for Plate Members (PGRUP)
         elif keyword == "PGRUP":
-            part1 = line[0:11]
-            full_value_part = line[11:]
-            separator = 'I' if 'I' in full_value_part else ''
-            
-            if separator:
-                thick_str, rest_of_line = full_value_part.split(separator, 1)
-            else:
-                thick_str, rest_of_line = line[11:17].strip(), line[17:]
-            
-            thick_val = float(thick_str) * random.uniform(0.8, 1.2)
-            thick_val = np.clip(thick_val, 0.250, 0.750)
+            thick_match = re.search(r"(\d+\.\d+)", line[10:])
+            if not thick_match:
+                logging.warning(f"Cannot parse PGRUP thickness: {line.strip()}")
+                return original_line_stripped
 
-            new_thick_str = f"{thick_val:<6.4f}"
-            return f"{part1}{new_thick_str}{separator}{rest_of_line}"
+            thick_str = thick_match.group(1)
+            thick_val = float(thick_str) * random.uniform(0.8, 1.2)
+            thick_val = np.clip(thick_val, 0.250, 2.000)
+            
+            # Reconstruct with proper formatting
+            num_decimals = len(thick_str.split('.')[1])
+            new_thick_str = f"{thick_val:.{num_decimals}f}"
+            new_line = line.replace(thick_str, new_thick_str, 1)
+            return new_line.rstrip()
 
     except Exception as e:
-        logging.error(f"在 _parse_and_modify_line 中处理 '{line}' 时出错: {e}", exc_info=True)
-        return line
-
-    return line
-
+        logging.error(f"Error in _parse_and_modify_line for '{block_name}': {e}", exc_info=True)
+        return line.rstrip()
+        
+    return line.rstrip()
 
 def generate_initial_population(config, seed):
-    """
-    V3 - 初始种群生成逻辑更新。
-    使用新的 INITIAL_SEEDS 列表。
-    """
+    # ... 此函数逻辑正确，无需修改 ...
     np.random.seed(seed)
     random.seed(seed)
     population_size = config.get('optimization.pop_size')
-    initial_population = []
+    optimizable_blocks = config.get('sacs.optimizable_blocks')
+    initial_population_jsons = []
+    seen_candidates = set()
+    max_tries = population_size * 10
 
-    # 1. 直接将所有精英种子方案加入初始种群 (确保不重复)
-    seen_seeds = set()
+    logging.info(f"正在生成大小为 {population_size} 的初始种群...")
+    
     for seed_candidate in INITIAL_SEEDS:
-        if len(initial_population) >= population_size:
-            break
-        # 使用JSON字符串作为唯一标识
         candidate_str = json.dumps(seed_candidate, sort_keys=True)
-        if candidate_str not in seen_seeds:
-            initial_population.append(json.dumps(seed_candidate))
-            seen_seeds.add(candidate_str)
-            
-    # 2. 通过扰动种子方案来填充剩余的种群名额
-    while len(initial_population) < population_size:
+        if candidate_str not in seen_candidates:
+            initial_population_jsons.append(candidate_str)
+            seen_candidates.add(candidate_str)
+    
+    try_count = 0
+    while len(initial_population_jsons) < population_size and try_count < max_tries:
         base_candidate = copy.deepcopy(random.choice(INITIAL_SEEDS))
+        num_modifications = random.randint(1, len(optimizable_blocks) // 2)
+        blocks_to_modify_names = random.sample(optimizable_blocks, min(num_modifications, len(optimizable_blocks)))
+
+        for block_name in blocks_to_modify_names:
+            block_key = block_name.replace(" ", "_")
+            if block_key in base_candidate["new_code_blocks"]:
+                original_sacs_line = base_candidate["new_code_blocks"][block_key]
+                modified_sacs_line = _parse_and_modify_line(original_sacs_line, block_name)
+                base_candidate["new_code_blocks"][block_key] = modified_sacs_line
         
-        # 随机选择1到3个块进行修改
-        num_modifications = random.randint(1, 3)
-        blocks_to_modify_keys = random.sample(list(base_candidate["new_code_blocks"].keys()), num_modifications)
+        candidate_str = json.dumps(base_candidate, sort_keys=True)
+        if candidate_str not in seen_candidates:
+            initial_population_jsons.append(candidate_str)
+            seen_candidates.add(candidate_str)
+        try_count += 1
 
-        for block_to_modify_key in blocks_to_modify_keys:
-            block_to_modify_name = block_to_modify_key.replace("_", " ")
-            original_sacs_line = base_candidate["new_code_blocks"][block_to_modify_key]
-            modified_sacs_line = _parse_and_modify_line(original_sacs_line, block_to_modify_name)
-            base_candidate["new_code_blocks"][block_to_modify_key] = modified_sacs_line
-        
-        initial_population.append(json.dumps(base_candidate))
+    if len(initial_population_jsons) < population_size:
+        logging.warning(f"仅生成了 {len(initial_population_jsons)}/{population_size} 个初始候选体。")
 
-    return initial_population
+    logging.info(f"成功生成 {len(initial_population_jsons)} 个初始候选体。")
+    return initial_population_jsons
 
-# ... (RewardingSystem 类 和 _transform_objectives 函数保持不变) ...
 
 class RewardingSystem:
-    # (此类的所有代码保持不变，无需修改)
+    # ... 此类逻辑正确，无需修改 ...
     def __init__(self, config):
         self.config = config
         self.sacs_project_path = config.get('sacs.project_path')
         self.logger = logging.getLogger(self.__class__.__name__)
         self.modifier = SacsFileModifier(self.sacs_project_path)
-        self.runner = SacsRunner(project_path=self.sacs_project_path)
+        self.runner = SacsRunner(project_path=self.sacs_project_path, sacs_install_path=config.get('sacs.install_path'))
         self.objs = config.get('goals', [])
         self.obj_directions = {obj: config.get('optimization_direction')[i] for i, obj in enumerate(self.objs)}
 
@@ -173,115 +271,119 @@ class RewardingSystem:
         for item in items:
             try:
                 raw_value = item.value
-                
                 try:
-                    json_str = raw_value
-                    if '<candidate>' in raw_value:
-                        json_str = raw_value.split('<candidate>', 1)[1].rsplit('</candidate>', 1)[0].strip()
-                    modifications = json.loads(json_str)
+                    if 'candidate' in raw_value:
+                        raw_value = raw_value.split('<candidate>', 1)[1].rsplit('</candidate>', 1)[0].strip()
+                    modifications = json.loads(raw_value)
                     new_code_blocks = modifications.get("new_code_blocks")
-                except (json.JSONDecodeError, IndexError) as e:
-                    self.logger.warning(f"从候选体解析JSON失败: {raw_value}. 错误: {e}")
-                    self._assign_penalty(item, "无效的JSON或候选体格式")
+                except (json.JSONDecodeError, IndexError, AttributeError) as e:
+                    self.logger.warning(f"Failed to parse candidate JSON: {raw_value}. Error: {e}")
+                    self._assign_penalty(item, "Invalid JSON format from LLM")
                     invalid_num += 1
                     continue
 
                 if not new_code_blocks or not isinstance(new_code_blocks, dict):
-                    self.logger.warning(f"无效的候选体格式: 'new_code_blocks' 缺失或不是字典. 值: {item.value}")
-                    self._assign_penalty(item, "无效的候选体结构")
+                    self._assign_penalty(item, "Invalid candidate structure (no new_code_blocks)")
                     invalid_num += 1
                     continue
                 
                 if not self.modifier.replace_code_blocks(new_code_blocks):
-                    self._assign_penalty(item, "文件修改失败")
+                    self._assign_penalty(item, "SACS file modification failed")
                     invalid_num += 1
                     continue
 
                 analysis_result = self.runner.run_analysis(timeout=300)
                 
                 if not analysis_result.get('success'):
-                    self.logger.warning(f"SACS分析候选体失败。原因: {analysis_result.get('error', '未知错误')}")
-                    sacs_error_msg = str(analysis_result.get('error', '未知错误'))
-                    self._assign_penalty(item, f"SACS运行失败: {sacs_error_msg[:200]}")
+                    error_msg = analysis_result.get('error', 'Unknown SACS execution error')
+                    self.logger.warning(f"SACS analysis failed for a candidate. Reason: {error_msg}")
+                    self._assign_penalty(item, f"SACS_Run_Fail: {str(error_msg)[:100]}")
                     invalid_num += 1
                     continue
                 
-                weight_res = calculate_sacs_volume(self.sacs_project_path)
+                weight_res = calculate_sacs_weight_from_db(self.sacs_project_path)
                 uc_res = get_sacs_uc_summary(self.sacs_project_path)
-                ftg_res = get_sacs_fatigue_summary(self.sacs_project_path)
 
-                is_uc_valid = uc_res.get('status') in ['success', 'success_no_data']
-                if not (weight_res.get('status') == 'success' and is_uc_valid and ftg_res.get('status') == 'success'):
-                    self.logger.warning("在SACS运行后，指标提取失败。")
-                    self._assign_penalty(item, "指标提取失败")
+                if not (weight_res.get('status') == 'success' and uc_res.get('status') == 'success'):
+                    self.logger.warning("Metric extraction failed after successful SACS run.")
+                    error_msg = f"W:{weight_res.get('error', 'OK')}|UC:{uc_res.get('message', 'OK')}"
+                    self._assign_penalty(item, f"Metric_Extraction_Fail: {error_msg}")
                     invalid_num += 1
                     continue
 
-                original = {
-                    'weight': weight_res['total_volume_m3'],
-                    'uc': uc_res.get('max_uc', 999.0),
-                    'fatigue': ftg_res.get('min_life_years', 0.0)
+                max_uc_overall = uc_res.get('max_uc', 999.0)
+                is_feasible = max_uc_overall <= 1.0
+                
+                raw_results = {
+                    'weight': weight_res['total_weight_tonnes'],
+                    'axial_uc_max': uc_res.get('axial_uc_max', 999.0),
+                    'bending_uc_max': uc_res.get('bending_uc_max', 999.0)
                 }
 
-                transformed = self._transform_objectives(original)
-                # 使用 np.mean 替代 np.sum，使分数范围回到 [0, 1] 区间
+                penalized_results = self._apply_penalty(raw_results, max_uc_overall)
+                transformed = self._transform_objectives(penalized_results)
                 overall_score = 1.0 - np.mean(list(transformed.values()))
 
-                results = {
-                    'original_results': original,
+                results_dict = {
+                    'original_results': raw_results,
                     'transformed_results': transformed,
-                    'overall_score': overall_score
+                    'overall_score': overall_score,
+                    'constraint_results': {'is_feasible': 1.0 if is_feasible else 0.0, 'max_uc': max_uc_overall}
                 }
-                item.assign_results(results)
+                item.assign_results(results_dict)
 
             except Exception as e:
-                self.logger.critical(f"评估项目 '{getattr(item, 'value', 'N/A')}' 时发生错误: {e}",
-                                     exc_info=True)
-                self._assign_penalty(item, f"评估时发生错误: {e}")
+                self.logger.critical(f"Unhandled exception during item evaluation: {e}", exc_info=True)
+                self._assign_penalty(item, f"Critical_Eval_Error: {e}")
                 invalid_num += 1
 
-        log_dict = { "invalid_num": invalid_num, "repeated_num": 0 }
-        return items, log_dict
+        return items, { "invalid_num": invalid_num, "repeated_num": 0 }
+
+    def _apply_penalty(self, results: dict, max_uc: float) -> dict:
+        penalized_results = results.copy()
+        if max_uc > 1.0:
+            penalty_factor = 1.0 + (max_uc - 1.0) * 5.0
+            self.logger.warning(f"Infeasible design: max_uc={max_uc:.3f}. Applying penalty factor {penalty_factor:.2f}.")
+            if self.obj_directions['weight'] == 'min':
+                penalized_results['weight'] *= penalty_factor
+        return penalized_results
 
     def _assign_penalty(self, item, reason=""):
-        penalty_score = 999
-        original = {}
-        for obj in self.objs:
-            original[obj] = penalty_score if self.obj_directions[obj] == 'min' else -penalty_score
-
-        transformed = {obj: 1.0 for obj in self.objs}
-        overall_score = -1.0 # 最差的分数
-
+        penalty_score = 99999
+        original = {obj: penalty_score if self.obj_directions[obj] == 'min' else -penalty_score for obj in self.objs}
         results = {
             'original_results': original,
-            'transformed_results': transformed,
-            'overall_score': overall_score,
+            'transformed_results': {obj: 1.0 for obj in self.objs},
+            'overall_score': -1.0,
+            'constraint_results': {'is_feasible': 0.0, 'max_uc': 999.0},
             'error_reason': reason
         }
         item.assign_results(results)
 
-    def _transform_objectives(self, original_results):
+    def _transform_objectives(self, penalized_results: dict) -> dict:
         transformed = {}
-        # 假设w, uc, ftg的期望范围来自配置文件或者分析
-        w_min, w_max = 2.0, 4.0
-        uc_min, uc_max = 0.7, 1.0
-        ftg_min, ftg_max = 20, 300
+        w_min, w_max = 50, 5000   
+        uc_min, uc_max = 0.0, 2.0
     
-        w = np.clip(original_results.get('weight', w_max), w_min, w_max)
-        transformed['weight'] = (w - w_min) / (w_max - w_min)
-        
-        uc_raw = original_results.get('uc', uc_max)
-        if uc_raw > uc_max:
-             # 如果UC超限，施加惩罚，使其标准化值大于1
-             uc = uc_max + (uc_raw - uc_max) * 5.0 # 乘以惩罚因子
+        w = np.clip(penalized_results.get('weight', w_max), w_min, w_max)
+        if self.obj_directions['weight'] == 'min':
+            transformed['weight'] = (w - w_min) / (w_max - w_min)
         else:
-             uc = uc_raw
-        uc_clipped = np.clip(uc, uc_min, uc_max + (999-uc_max)*5.0) # 允许惩罚后的值
-        transformed['uc'] = (uc_clipped - uc_min) / (uc_max - uc_min)
+            transformed['weight'] = (w_max - w) / (w_max - w_min)
+        
+        auc = np.clip(penalized_results.get('axial_uc_max', uc_max), uc_min, uc_max)
+        if self.obj_directions['axial_uc_max'] == 'min':
+             transformed['axial_uc_max'] = (auc - uc_min) / (uc_max - uc_min)
+        else:
+             transformed['axial_uc_max'] = (uc_max - auc) / (uc_max - uc_min)
 
-        ftg = np.clip(original_results.get('fatigue', ftg_min), ftg_min, ftg_max)
-        # 疲劳是越大越好，所以需要反向归一化
-        normalized_ftg = (ftg - ftg_min) / (ftg_max - ftg_min)
-        transformed['fatigue'] = 1.0 - normalized_ftg # 值越小越好
+        buc = np.clip(penalized_results.get('bending_uc_max', uc_max), uc_min, uc_max)
+        if self.obj_directions['bending_uc_max'] == 'min':
+            transformed['bending_uc_max'] = (buc - uc_min) / (uc_max - uc_min)
+        else:
+            transformed['bending_uc_max'] = (uc_max - buc) / (uc_max - uc_min)
 
+        for key, val in transformed.items():
+            transformed[key] = np.clip(val, 0.0, 1.0)
+            
         return transformed

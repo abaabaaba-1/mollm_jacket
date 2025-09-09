@@ -41,7 +41,7 @@ class SacsRunner:
 
         try:
             self.win_project_path_str: str = self._wsl_to_windows_path(self.project_path)
-            self.win_runx_path_str: str = self._wsl_to_windows_path(self.project_path / "demo06.runx")
+            self.win_runx_path_str: str = self._wsl_to_windows_path(self.project_path / "static.demo06.runx")
             self.wsl_engine_path_str: str = self._windows_to_wsl_path(
                 f"{self.win_sacs_install_path_str}\\AnalysisEngine.exe")
         except Exception as e:
