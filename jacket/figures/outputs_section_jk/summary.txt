@@ -1,0 +1,5 @@
+Problem: section_jk
+  Algo=ga, runs=3, seeds=[44, 43, 42], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_jk_baseline_GA_optimized_44.json
+  Algo=nsga2, runs=3, seeds=[43, 42, 44], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_jk_baseline_NSGA2_43.json
+  Algo=ojollm, runs=3, seeds=[42, 43, 44], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_jk_42.json
+  Algo=sms, runs=3, seeds=[42, 44, 43], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_jk_baseline_SMSEMOA_42.json

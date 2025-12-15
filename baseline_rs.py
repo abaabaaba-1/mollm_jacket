@@ -28,10 +28,10 @@ import pickle
 import time
 import numpy as np
 from tqdm import tqdm
+from importlib import import_module
 
 from model.MOLLM import ConfigLoader
 from algorithm.base import ItemFactory
-from problem.sacs_geo_jk.evaluator import RewardingSystem, generate_initial_population
 from model.util import nsga2_so_selection, top_auc, cal_hv
 
 
@@ -151,6 +151,13 @@ def run_rs_baseline(config_path: str, seed: int):
     print(f"实验名称: {exper_name}")
     print(f"评估预算: {eval_budget}, 日志记录频率: {log_freq}")
 
+    # 根据配置中的 evalutor_path 动态加载 RewardingSystem 和 generate_initial_population，
+    # 以支持 geo/section 四种问题的统一脚本。
+    module_path = config.get('evalutor_path')
+    module = import_module(module_path)
+    RewardingSystem = getattr(module, 'RewardingSystem')
+    generate_initial_population = getattr(module, 'generate_initial_population')
+
     item_factory = ItemFactory(goals)
     reward_system = RewardingSystem(config=config)
     print("ItemFactory 和 RewardingSystem 初始化完成。")
@@ -262,8 +269,12 @@ def run_rs_baseline(config_path: str, seed: int):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="运行随机搜索基准测试。")
-    parser.add_argument("--config", type=str, default="sacs_geo_jk/config.yaml", help="指向特定问题配置文件的路径。")
-    parser.add_argument("--seed", type=int, default=42, help="用于可复现性的随机种子。")
-    args = parser.parse_args()
-    run_rs_baseline(config_path=args.config, seed=args.seed)
 
+    # 与其它 baseline 保持一致：配置作为位置参数传入，默认为 geo_jk。
+    parser.add_argument("config", type=str, nargs="?", default="sacs_geo_jk/config.yaml", help="指向特定问题配置文件的路径。")
+
+    parser.add_argument("--seed", type=int, default=42, help="用于可复现性的随机种子。")
+
+    args = parser.parse_args()
+
+    run_rs_baseline(config_path=args.config, seed=args.seed)

@@ -3,6 +3,7 @@ import pickle
 import os
 import json
 import time
+import argparse
 from pymoo.algorithms.moo.moead import MOEAD
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.operators.crossover.sbx import SBX
@@ -11,6 +12,8 @@ from pymoo.optimize import minimize
 from pymoo.core.problem import Problem
 from pymoo.util.ref_dirs import get_reference_directions
 import yaml
+
+from model.util import cal_hv
 
 # =========================================================================================================
 # UTILS (Copied from your framework for consistency)
@@ -67,7 +70,7 @@ class SACSProblem(Problem):
         self.item_factory = item_factory
         self.history_buffer = [] 
         self.eval_count = 0
-        n_obj = len(config.get('goals'))
+        n_obj = len(config.get("goals"))
         super().__init__(n_var=1, n_obj=n_obj, n_ieq_constr=0, elementwise=True, vtype=object)
 
     def _evaluate(self, x, out, *args, **kwargs):
@@ -85,12 +88,25 @@ class SACSProblem(Problem):
 # =========================================================================================================
 
 def main():
-    # --- 1. Load Configuration ---
-    config_path = os.environ.get('MOLLM_CONFIG', 'sacs_geo_jk/config.yaml')
-    # 与框架一致：实际文件在 problem/ 下，若未包含则补上
-    if not (config_path.startswith('problem/') or os.path.isabs(config_path)):
-        config_path = os.path.join('problem', config_path)
-    with open(config_path, 'r') as file:
+
+    # --- 1. Parse arguments & load configuration ---
+    parser = argparse.ArgumentParser(description="Run MOEA/D baseline (config-driven).")
+    parser.add_argument(
+        "config",
+        type=str,
+        nargs="?",
+        default="sacs_geo_jk/config.yaml",
+        help="Path to the configuration file (relative to problem/).",
+    )
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    args = parser.parse_args()
+
+    config_path = args.config
+    # 与其它 baseline 一致：实际文件在 problem/ 下，若未包含则补上
+    if not (config_path.startswith("problem/") or os.path.isabs(config_path)):
+        config_path = os.path.join("problem", config_path)
+
+    with open(config_path, "r") as file:
         config_data = yaml.safe_load(file)
 
     class Config:
@@ -109,18 +125,22 @@ def main():
             return yaml.dump(self._data)
 
     config = Config(config_data)
-    seed = 42
+    seed = int(args.seed)
 
     # --- 2. Setup Environment ---
-    property_list = config.get('goals')
-    save_dir = config.get('save_dir')
+
+    # 为保证可复现性，设置随机种子
+    np.random.seed(seed)
+
+    property_list = config.get("goals")
+    save_dir = config.get("save_dir")
     model_name = "baseline_moead"
-    save_suffix = config.get('save_suffix')
+    save_suffix = config.get("save_suffix")
     save_dir_path = os.path.join(save_dir, model_name)
     os.makedirs(save_dir_path, exist_ok=True)
     
-    module_path = config.get('evalutor_path')
-    module = __import__(module_path, fromlist=['RewardingSystem', 'generate_initial_population'])
+    module_path = config.get("evalutor_path")
+    module = __import__(module_path, fromlist=["RewardingSystem", "generate_initial_population"])
     RewardingSystem = module.RewardingSystem
     generate_initial_population = module.generate_initial_population
     
@@ -141,8 +161,8 @@ def main():
     # --- 4. Setup Pymoo Algorithm ---
     problem = SACSProblem(reward_system, config, item_factory)
 
-    pop_size = config.get('optimization.pop_size')
-    eval_budget = config.get('optimization.eval_budget')
+    pop_size = config.get("optimization.pop_size")
+    eval_budget = config.get("optimization.eval_budget")
 
     initial_sampling = np.array(initial_population_strs).reshape(-1, 1)
     
@@ -162,7 +182,7 @@ def main():
     termination = ('n_eval', eval_budget)
     
     # --- 5. Run Optimization ---
-    print(f"Running MOEA/D for {eval_budget} evaluations...")
+    print(f"Running MOEA/D for {eval_budget} evaluations (seed={seed})...")
     start_time = time.time()
     
     res = minimize(problem,
@@ -183,8 +203,18 @@ def main():
     log_freq = config.get('optimization.log_freq')
     for i in range(log_freq, eval_budget + 1, log_freq):
         subset_buffer = [item for item in all_evaluated_items if item[1] <= i]
-        if not subset_buffer: continue
+        if not subset_buffer:
+            continue
+
+        # Top-100 by total score (与主框架保持一致)
         top100_items = sorted([item[0] for item in subset_buffer], key=lambda x: x.total, reverse=True)[:100]
+
+        if top100_items:
+            scores_for_hv = np.array([it.scores for it in top100_items if it.scores is not None], dtype=float)
+            hypervolume = cal_hv(scores_for_hv) if scores_for_hv.size > 0 else 0.0
+        else:
+            hypervolume = 0.0
+
         results_log['results'].append({
             'Training_step': i,
             'all_unique_moles': len(subset_buffer),
@@ -194,10 +224,17 @@ def main():
             'top1_auc': top_auc(subset_buffer, 1, False, 100, eval_budget),
             'top10_auc': top_auc(subset_buffer, 10, False, 100, eval_budget),
             'top100_auc': top_auc(subset_buffer, 100, False, 100, eval_budget),
+            'hypervolume': hypervolume,
             'running_time[s]': running_time * (i / eval_budget)
         })
 
     final_top100 = sorted([item[0] for item in all_evaluated_items], key=lambda x: x.total, reverse=True)[:100]
+    if final_top100:
+        scores_for_hv_final = np.array([it.scores for it in final_top100 if it.scores is not None], dtype=float)
+        hypervolume_final = cal_hv(scores_for_hv_final) if scores_for_hv_final.size > 0 else 0.0
+    else:
+        hypervolume_final = 0.0
+
     results_log['results'].append({
         'Training_step': len(all_evaluated_items),
         'all_unique_moles': len(all_evaluated_items),
@@ -207,24 +244,26 @@ def main():
         'top1_auc': top_auc(all_evaluated_items, 1, True, 100, eval_budget),
         'top10_auc': top_auc(all_evaluated_items, 10, True, 100, eval_budget),
         'top100_auc': top_auc(all_evaluated_items, 100, True, 100, eval_budget),
+        'hypervolume': hypervolume_final,
         'running_time[s]': running_time
     })
     
     json_path = os.path.join(save_dir_path, f"{'_'.join(property_list)}_{save_suffix}_{seed}.json")
-    with open(json_path, 'w') as f:
+    with open(json_path, "w") as f:
         json.dump(results_log, f, indent=4)
     print(f"JSON results saved to {json_path}")
 
     pkl_path = os.path.join(save_dir_path, f"{'_'.join(property_list)}_{save_suffix}.pkl")
+    # 这里不区分初始/最终种群，只保存完整历史，以保持与其他脚本的基本兼容
     data_to_save = {
-        'init_pops': evaluated_initial_items,
-        'final_pops': final_population_items,
-        'all_mols': all_evaluated_items,
-        'properties': property_list,
-        'evaluation': results_log['results'],
-        'running_time': f'{running_time / 3600:.2f} hours'
+        "init_pops": [],
+        "final_pops": final_population_items,
+        "all_mols": all_evaluated_items,
+        "properties": property_list,
+        "evaluation": results_log["results"],
+        "running_time": f"{running_time / 3600:.2f} hours",
     }
-    with open(pkl_path, 'wb') as f:
+    with open(pkl_path, "wb") as f:
         pickle.dump(data_to_save, f)
     print(f"PKL data saved to {pkl_path}")
 

@@ -5,9 +5,8 @@ description: "Optimizing SACS jacket structure with an expanded set of members (
 save_dir: "./moo_results/"
 save_suffix: "sacs_expanded_3_obj"
 
-cc: False
 early_stopping: False
-
+resume: False
 
 model:
   name: zgca,gemini-2.5-flash-nothinking

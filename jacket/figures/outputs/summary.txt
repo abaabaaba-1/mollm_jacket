@@ -1,17 +1,20 @@
 Problem: geo_jk
-  Algo=ga, runs=4, seeds=[62, 63, 60, 101], sample_file=weight_axial_uc_max_bending_uc_max_sacs_geo_jk_baseline_GA_optimized_62.json
-  Algo=nsga2, runs=4, seeds=[101, 60, 62, 63], sample_file=weight_axial_uc_max_bending_uc_max_sacs_geo_jk_baseline_NSGA2_101.json
-  Algo=ojollm, runs=1, seeds=[42], sample_file=weight_axial_uc_max_bending_uc_max_sacs_geo_jk_42.json
-  Algo=sms, runs=4, seeds=[62, 60, 63, 101], sample_file=weight_axial_uc_max_bending_uc_max_sacs_geo_jk_baseline_SMSEMOA_62.json
+  Algo=ojollm, runs=4, seeds=[62, 101, 42, 60], sample_file=weight_axial_uc_max_bending_uc_max_sacs_geo_jk_62.json
+
+Problem: geo_pf
+  Algo=ga, runs=1, seeds=[80], sample_file=weight_axial_uc_max_bending_uc_max_sacs_geo_pf_baseline_GA_optimized_80.json
+  Algo=nsga2, runs=1, seeds=[80], sample_file=weight_axial_uc_max_bending_uc_max_sacs_geo_pf_baseline_NSGA2_80.json
+  Algo=ojollm, runs=1, seeds=[80], sample_file=weight_axial_uc_max_bending_uc_max_sacs_geo_pf_80.json
+  Algo=sms, runs=1, seeds=[80], sample_file=weight_axial_uc_max_bending_uc_max_sacs_geo_pf_baseline_SMSEMOA_80.json
 
 Problem: section_jk
-  Algo=ga, runs=3, seeds=[42, 44, 43], sample_file=weight_axial_uc_max_bending_uc_max_sacs_expanded_3_obj_baseline_GA_optimized_42.json
-  Algo=nsga2, runs=3, seeds=[43, 44, 42], sample_file=weight_axial_uc_max_bending_uc_max_sacs_expanded_3_obj_baseline_NSGA2_43.json
-  Algo=ojollm, runs=3, seeds=[43, 42, 44], sample_file=weight_axial_uc_max_bending_uc_max_sacs_expanded_3_obj_43.json
-  Algo=sms, runs=3, seeds=[42, 43, 44], sample_file=weight_axial_uc_max_bending_uc_max_sacs_expanded_3_obj_baseline_SMSEMOA_42.json
+  Algo=ga, runs=3, seeds=[44, 43, 42], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_jk_baseline_GA_optimized_44.json
+  Algo=nsga2, runs=3, seeds=[43, 42, 44], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_jk_baseline_NSGA2_43.json
+  Algo=ojollm, runs=3, seeds=[42, 43, 44], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_jk_42.json
+  Algo=sms, runs=3, seeds=[42, 44, 43], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_jk_baseline_SMSEMOA_42.json
 
 Problem: section_pf
-  Algo=ga, runs=1, seeds=[90], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_pf_baseline_GA_optimized_90.json
-  Algo=nsga2, runs=1, seeds=[90], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_pf_baseline_NSGA2_90.json
+  Algo=ga, runs=1, seeds=[80], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_pf_baseline_GA_optimized_80.json
+  Algo=nsga2, runs=1, seeds=[80], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_pf_baseline_NSGA2_80.json
   Algo=ojollm, runs=1, seeds=[80], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_pf_80.json
-  Algo=sms, runs=1, seeds=[90], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_pf_baseline_SMSEMOA_90.json
+  Algo=sms, runs=1, seeds=[80], sample_file=weight_axial_uc_max_bending_uc_max_sacs_section_pf_baseline_SMSEMOA_80.json

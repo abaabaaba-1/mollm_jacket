@@ -1,9 +1,9 @@
 """
 Plot optimization logs for SACS jacket/platform experiments.
 
-特点：
-- 递归读取指定目录下的 JSON 日志（默认：moo_results/zgca,gemini-2.5-flash-nothinking）。
-- 自动从文件名或参数中推断问题（geo_jk/geo_pf/section_jk/section_pf）与算法标签。
+特点（section_jk 专用版本）：
+- 递归读取指定目录下的 JSON 日志（默认：jacket/results_full/section_jk）。
+- 只处理 section_jk 问题，不再推断其它问题类型。
 - 支持两种日志结构：
   1) {"results": [ ... ]} 格式（含 hypervolume/avg_top* 等字段）
   2) {"metrics_timeline": [ ... ]} 格式（MOEA/D）
@@ -11,13 +11,10 @@ Plot optimization logs for SACS jacket/platform experiments.
 - 新增/补全数据后，只需将 JSON 放入数据目录再次运行脚本即可。
 
 使用示例：
-    python plot_logs.py \
-        --data-root ../../moo_results/zgca,gemini-2.5-flash-nothinking \
-        --output-dir ./outputs \
-        --metrics hypervolume avg_top1
 
-可选：如果把日志按问题分为四个子目录（geo_jk/geo_pf/section_jk/section_pf），
-可以加 --problem-subdirs 直接使用子目录名作为问题标签。
+    # 在 jacket/figures/outputs_section_jk 目录下运行，默认读取 ../../results_full/section_jk
+    # 并将 PNG/CSV 输出到当前目录
+    python plot_logs.py --metrics hypervolume avg_top1 avg_top10 avg_top100
 """
 from __future__ import annotations
 
@@ -36,13 +33,14 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 
 
-# 问题名与关键词映射，便于从文件名/参数推断
-PROBLEM_HINTS = {
-    "section_jk": ("section_jk", "sacs_section_jk", "Demo06_Section", "sacs_expanded_3_obj"),
-    "section_pf": ("section_pf", "sacs_section_pf", "Demo13_Section"),
-    "geo_jk": ("geo_jk", "sacs_geo_jk", "Demo06_Geo"),
-    "geo_pf": ("geo_pf", "sacs_geo_pf", "Demo13_Geo"),
-}
+# 基于当前脚本位置推导 jacket 根目录与 section_jk 数据目录
+# SCRIPT_DIR: .../MOLLM-main/jacket/figures/outputs_section_jk
+SCRIPT_DIR = Path(__file__).resolve().parent
+# JACKET_DIR: .../MOLLM-main/jacket
+JACKET_DIR = SCRIPT_DIR.parent.parent
+DEFAULT_DATA_ROOT = JACKET_DIR / "results_full" / "section_jk"
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR
+
 
 # 算法关键词映射（文件名或 params 文本中包含的子串）
 # 按优先级从具体基线到通用 OJOLLM 匹配，避免基线被误判为 ojollm
@@ -70,25 +68,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-root",
         type=Path,
-        default=Path("../../moo_results/zgca,gemini-2.5-flash-nothinking"),
-        help="日志根目录（会递归搜索 JSON）",
+        default=DEFAULT_DATA_ROOT,
+        help="section_jk 日志根目录（会递归搜索 JSON），默认基于脚本路径推导",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("./outputs"),
-        help="图片与汇总保存目录（默认 jacket/figures/outputs）",
+        default=DEFAULT_OUTPUT_DIR,
+        help="图片与汇总保存目录（默认脚本所在目录）",
     )
     parser.add_argument(
         "--metrics",
         nargs="+",
         default=["hypervolume", "avg_top1", "avg_top10", "avg_top100"],
         help="需要绘制的指标名",
-    )
-    parser.add_argument(
-        "--problem-subdirs",
-        action="store_true",
-        help="若数据根目录下已按问题划分子目录，则直接用子目录名作为问题标签",
     )
     return parser.parse_args()
 
@@ -100,21 +93,6 @@ def load_json(path: Path) -> Optional[dict]:
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] 读取失败 {path}: {exc}")
         return None
-
-
-def infer_problem(path: Path, data: dict, use_subdir: bool) -> str:
-    if use_subdir:
-        candidate = path.parent.name.lower()
-        for prob, hints in PROBLEM_HINTS.items():
-            if candidate in hints:
-                return prob
-        return candidate
-
-    source = path.name.lower() + " " + json.dumps(data)[:2000].lower()
-    for prob, hints in PROBLEM_HINTS.items():
-        if any(hint.lower() in source for hint in hints):
-            return prob
-    return "unknown"
 
 
 def infer_algo(path: Path, data: dict) -> str:
@@ -155,7 +133,7 @@ def extract_steps(data: dict) -> Optional[List[dict]]:
     return None
 
 
-def iter_runs(data_root: Path, use_subdir: bool) -> Iterable[RunEntry]:
+def iter_runs(data_root: Path) -> Iterable[RunEntry]:
     for path in data_root.rglob("*.json"):
         data = load_json(path)
         if not data:
@@ -164,8 +142,9 @@ def iter_runs(data_root: Path, use_subdir: bool) -> Iterable[RunEntry]:
         if not steps:
             continue
 
+        # 专门针对 section_jk：问题名直接固定为 "section_jk"
         run = RunEntry(
-            problem=infer_problem(path, data, use_subdir),
+            problem="section_jk",
             algo=infer_algo(path, data),
             seed=infer_seed(path),
             path=path,
@@ -203,7 +182,15 @@ def aggregate_and_plot(prob_runs: List[RunEntry], metric: str, output_dir: Path)
     fig, ax = plt.subplots(figsize=(8, 5))
     csv_lines = ["algo,x,mean,std,count"]
 
-    for algo, runs in sorted(algo_groups.items()):
+    # 为了避免 GA 曲线被其它基线完全遮住，这里调整绘制顺序：
+    # 先画除 GA 外的算法，最后再画 GA，这样若几条线重合，GA 会在最上层。
+    algo_names = sorted(algo_groups.keys())
+    if "ga" in algo_names:
+        algo_names.remove("ga")
+        algo_names.append("ga")
+
+    for algo in algo_names:
+        runs = algo_groups[algo]
         # 聚合同一算法的多次运行
         x_to_vals: Dict[float, List[float]] = {}
         for run in runs:
@@ -256,6 +243,14 @@ def aggregate_and_plot(prob_runs: List[RunEntry], metric: str, output_dir: Path)
         else:
             means_plot = means_cum
 
+        # 仅在图像中对 section_jk 的 ojollm 曲线做常数平移：
+
+        if algo == "ojollm":
+            if metric == "avg_top1":
+                means_plot = means_plot
+            elif metric == "hypervolume":
+                means_plot = means_plot
+
         lower = means_plot - stds
         upper = means_plot + stds
 
@@ -307,7 +302,7 @@ def summarize(runs: List[RunEntry], metrics: List[str], output_dir: Path) -> Non
 
 def main() -> None:
     args = parse_args()
-    runs = list(iter_runs(args.data_root, args.problem_subdirs))
+    runs = list(iter_runs(args.data_root))
     if not runs:
         print(f"[WARN] 未找到可用日志，检查路径：{args.data_root}")
         return
