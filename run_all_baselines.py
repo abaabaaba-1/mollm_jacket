@@ -13,7 +13,7 @@ Usage:
     
     # Run only MOLLM for section_pf
     python run_all_baselines.py --problem section_pf --algorithms mollm --seeds 42 43 44
-    
+    python run_all_baselines.py --problem geo_jk --algorithms nsga3 moeadd rvea --seeds 42
     # Run all problems with all algorithms (WARNING: very long runtime)
     python run_all_baselines.py --problem all
     
@@ -81,7 +81,10 @@ ALGORITHMS = {
     'ga': {'script': 'baseline_ga.py', 'type': 'baseline'},
     'sms': {'script': 'baseline_sms.py', 'type': 'baseline'},
     'nsga2': {'script': 'baseline_nsga2.py', 'type': 'baseline'},
+    'nsga3': {'script': 'baseline_nsgaiii.py', 'type': 'baseline'},
     'moead': {'script': 'baseline_moead.py', 'type': 'baseline'},
+    'moeadd': {'script': 'baseline_moeadd.py', 'type': 'baseline'},
+    'rvea': {'script': 'baseline_rvea.py', 'type': 'baseline'},
     'rs': {'script': 'baseline_rs.py', 'type': 'baseline'},
     # MOLLM
     'mollm': {'script': 'main.py', 'type': 'mollm'},
