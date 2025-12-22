@@ -41,3 +41,8 @@ python3 run_all_baselines.py --problem geo_pf --algorithms mollm ga nsga2 sms --
 python3 run_all_baselines.py --problem section_pf --algorithms mollm ga nsga2 sms --seeds 80 90 101
 截面 JK（MOLLM seeds 42/43/44 已清空）：
 python3 run_all_baselines.py --problem section_jk --algorithms mollm --seeds 42 43 44
+
+git status
+git add .
+git commit -m "1221"
+git push origin main

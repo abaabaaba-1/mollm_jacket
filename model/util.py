@@ -174,9 +174,10 @@ def _get_objective_matrix(population):
 def _generate_reference_directions(n_obj, n_points):
     """Generate reference directions with a safe fallback."""
     try:
-        ref_dirs = get_reference_directions("energy", n_obj=n_obj, n_points=n_points)
+        # In current pymoo versions, the argument is `n_dim` instead of `n_obj`.
+        ref_dirs = get_reference_directions("energy", n_dim=n_obj, n_points=n_points)
     except Exception:
-        ref_dirs = get_reference_directions("das-dennis", n_obj=n_obj, n_points=n_points)
+        ref_dirs = get_reference_directions("das-dennis", n_dim=n_obj, n_points=n_points)
     ref_dirs = np.asarray(ref_dirs, dtype=float)
     # Normalise directions
     ref_dirs /= np.linalg.norm(ref_dirs, axis=1, keepdims=True) + 1e-12
